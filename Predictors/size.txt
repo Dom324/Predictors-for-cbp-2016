@@ -1,0 +1,20 @@
+lastbit
+	N
+	size = N
+	
+bimodal
+	N
+	size = N * 2
+	
+global
+	N
+	size = 2^(N+1)
+	
+local
+	N, M
+	size = N * M + 2^(N+1)
+	
+	
+gp_17 = 262 144
+local_17_2048 = 296 960
+gp_16 + local_16_2048 = 294 912
