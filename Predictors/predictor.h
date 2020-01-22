@@ -17,18 +17,28 @@
 #define PHT_CTR_MAX  3
 #define PHT_CTR_INIT 2
 
-#define VECTOR_LEN  15
-#define BIMODAL_LEN (VECTOR_LEN - 2)
+#define VECTOR_LEN  16
+#define VECTOR_LEN_TAKEN  16
+#define VECTOR_LEN_NOT_TAKEN  16
 
-#define HIST_LEN  15
+#define BIMODAL_LEN (VECTOR_LEN - 1)
+
+//#define HL_BIM 5
+#define HL_TAKEN_1 18
+#define HL_TAKEN_2 23
+
+#define HL_NOTTAKEN_1 17
+#define HL_NOTTAKEN_2 24
+
 #define SHFT_AMOUNT 2
+#define HystShft 2
 
 #define WARM_UP_TIME 16
 #define REFRESH_TIME 20
 
 //stats
- // UINT64  NumMispred = 0, NumBranches = 0, NumphtTaken = 0, NumphtNotTaken = 0, Numbimodal = 0, phtTakenakenRelativeMispred = 0, pht1NotTakenRelativeMispred = 0,
- //         pht2NotTakenRelativeMispred = 0, bimodalRelativeMispred = 0, bimodalEgskewRelativeMispred = 0, metaChoosedBimodal = 0, metaChoosedWrong = 0, metaDontMatter = 0;
+  UINT64  NumMispred = 0, NumBranches = 0, phtT1mispred = 0, phtT2mispred = 0, phtNT1mispred = 0, phtNT2mispred = 0, bimodalMispred = 0,
+		  MajorityVote3Mispred = 0, MajorityVote5Mispred = 0, MajorityVote5Used = 0, MajorityVote3Used = 0, TakenPhtUsed = 0, NotTakenPhtUsed = 0, TakenPhtMispred = 0, NotTakenPhtMispred = 0;
 //stats
 
 class PREDICTOR{
@@ -40,9 +50,13 @@ class PREDICTOR{
   UINT32  *phtTaken;          // pattern history table
   UINT32  *phtNotTaken;          // pattern history table
   UINT32  *bimodal;		  // bimodal table
-  UINT32  *HYST;
+  UINT32  *HYSTTaken;
+  UINT32  *HYSTNotTaken;
   UINT32  numPhtEntries; // entries in pht 
+  UINT32  numPhtEntriesTaken; // entries in pht 
+  UINT32  numPhtEntriesNotTaken; // entries in pht 
   UINT32  numBimodalEntries;
+  UINT32  numHystEntries;
   UINT32  WarmUpTime = 0;
   UINT32  Refresh = 0;
 
@@ -66,17 +80,19 @@ class PREDICTOR{
 PREDICTOR::PREDICTOR(void){
 
   ghr              = 0;
-  numPhtEntries    = (1 << VECTOR_LEN);
+  numPhtEntriesTaken    = (1 << VECTOR_LEN_TAKEN);
+  numPhtEntriesNotTaken    = (1 << VECTOR_LEN_NOT_TAKEN);
   numBimodalEntries = (1 << BIMODAL_LEN);
+  numHystEntries = (1 << (VECTOR_LEN - HystShft));
   
 
-  phtTaken = new UINT32[numPhtEntries];
+  phtTaken = new UINT32[numPhtEntriesTaken];
 
   for(UINT32 ii=0; ii< numPhtEntries; ii++){
-    phtTaken[ii]=PHT_CTR_INIT; 
+    phtTaken[ii]=1; 
   }
   
-  phtNotTaken = new UINT32[numPhtEntries];
+  phtNotTaken = new UINT32[numPhtEntriesNotTaken];
 
   for(UINT32 ii=0; ii< numPhtEntries; ii++){
     phtNotTaken[ii]=0; 
@@ -89,10 +105,16 @@ PREDICTOR::PREDICTOR(void){
   }
   
   
-  HYST = new UINT32[numPhtEntries];
+  HYSTTaken = new UINT32[numHystEntries];
 
-  for(UINT32 ii=0; ii< numPhtEntries; ii++){
-    HYST[ii]= 0;
+  for(UINT32 ii=0; ii< numHystEntries; ii++){
+    HYSTTaken[ii]= 0;
+  }
+  
+  HYSTNotTaken = new UINT32[numHystEntries];
+
+  for(UINT32 ii=0; ii< numHystEntries; ii++){
+    HYSTNotTaken[ii]= 0;
   }
   
 }
@@ -100,32 +122,60 @@ PREDICTOR::PREDICTOR(void){
 
 bool   PREDICTOR::GetPrediction(UINT64 PC){
 	
-  numPhtEntries    = (1 << VECTOR_LEN);
+  numPhtEntriesTaken    = (1 << VECTOR_LEN_TAKEN);
+  numPhtEntriesNotTaken    = (1 << VECTOR_LEN_NOT_TAKEN);
   numBimodalEntries = (1 << BIMODAL_LEN);
+  numHystEntries = (1 << (VECTOR_LEN - HystShft));
   
   UINT32 majorityVote = 0;
-  UINT64 f0, f1;
-	
-  UINT64 v = ((PC >> SHFT_AMOUNT) << HIST_LEN) + (ghr % (1 << HIST_LEN));
+  UINT64 f0T, f1T, f0NT, f1NT, v, v1, v2;
   
-  UINT64 v1 = v % numPhtEntries;
-  UINT64 v2 = (v >> VECTOR_LEN) % (numPhtEntries);
+  
+	//Bimodal index
   UINT32 bimodal_index = (PC >> SHFT_AMOUNT) % numBimodalEntries;
-  
-  
-	f0 = H (v1, VECTOR_LEN) ^ H_inversed (v2, VECTOR_LEN) ^ v2;
-	f1 = H_inversed (v1, VECTOR_LEN) ^ H (v2, VECTOR_LEN) ^ v1;
-  
- 
-  UINT32 phtCounterT1 = (phtTaken[f0] << 1) + HYST[f0];
-  UINT32 phtCounterNT1 = (phtNotTaken[f0] << 1) + HYST[f0];
-  UINT32 phtCounterT2= (phtTaken[f1] << 1) + HYST[f1];
-  UINT32 phtCounterNT2 = (phtNotTaken[f1] << 1) + HYST[f1];
   UINT32 bimodalCounter = bimodal[bimodal_index];
+	
+	//Index PHT1 TAKEN
+  v = ((PC >> SHFT_AMOUNT) << HL_TAKEN_1) + (ghr % ((UINT64)1 << HL_TAKEN_1));
+  v1 = v % numPhtEntriesTaken;
+  v2 = (v >> VECTOR_LEN_TAKEN) % (numPhtEntriesTaken);
+  
+	f0T = H (v1, VECTOR_LEN_TAKEN) ^ H_inversed (v2, VECTOR_LEN_TAKEN) ^ v2;
+	
+	
+	//Index PHT2 TAKEN
+  v = ((PC >> SHFT_AMOUNT) << HL_TAKEN_2) + (ghr % ((UINT64)1 << HL_TAKEN_2));
+  v1 = v % numPhtEntriesTaken;
+  v2 = (v >> VECTOR_LEN_TAKEN) % (numPhtEntriesTaken);
+  
+	f1T = H_inversed (v1, VECTOR_LEN_TAKEN) ^ H (v2, VECTOR_LEN_TAKEN) ^ v1;
+	
+		UINT32 phtCounterT1 = (phtTaken[f0T] << 1) + HYSTTaken[f0T >> (VECTOR_LEN_TAKEN - VECTOR_LEN + HystShft)];
+		UINT32 phtCounterT2 = (phtTaken[f1T] << 1) + HYSTTaken[f1T >> (VECTOR_LEN_TAKEN - VECTOR_LEN + HystShft)];
+	
+	
+	//Index PHT1 NOT TAKEN
+  v = ((PC >> SHFT_AMOUNT) << HL_NOTTAKEN_1) + (ghr % ((UINT64)1 << HL_NOTTAKEN_1));
+  v1 = v % numPhtEntriesNotTaken;
+  v2 = (v >> VECTOR_LEN_NOT_TAKEN) % (numPhtEntriesNotTaken);
+  
+	f0NT = H (v1, VECTOR_LEN_NOT_TAKEN) ^ H_inversed (v2, VECTOR_LEN_NOT_TAKEN) ^ v2;
+	
+	
+	//Index PHT2 NOT TAKEN
+  v = ((PC >> SHFT_AMOUNT) << HL_NOTTAKEN_2) + (ghr % ((UINT64)1 << HL_NOTTAKEN_2));
+  v1 = v % numPhtEntriesNotTaken;
+  v2 = (v >> VECTOR_LEN_NOT_TAKEN) % (numPhtEntriesNotTaken);
+  
+	f1NT = H_inversed (v1, VECTOR_LEN_NOT_TAKEN) ^ H (v2, VECTOR_LEN_NOT_TAKEN) ^ v1;
+ 
+		UINT32 phtCounterNT1 = (phtNotTaken[f0NT] << 1) + HYSTNotTaken[f0NT >> (VECTOR_LEN_NOT_TAKEN - VECTOR_LEN + HystShft)];
+		UINT32 phtCounterNT2 = (phtNotTaken[f1NT] << 1) + HYSTNotTaken[f1NT >> (VECTOR_LEN_NOT_TAKEN - VECTOR_LEN + HystShft)];
+
+	
+	if((bimodalCounter & 1) == 1){
 		
-	if(bimodalCounter == PHT_CTR_MAX  ||  bimodalCounter == 0){
-		
-		if(bimodalCounter > PHT_CTR_MAX/2){
+		if(bimodalCounter >> 1){
 		
 			majorityVote++;
 			
@@ -165,8 +215,8 @@ bool   PREDICTOR::GetPrediction(UINT64 PC){
 		
 	}
 	else{
-			
-		if(bimodalCounter > PHT_CTR_MAX/2)
+		
+		if(bimodalCounter >> 1)
 			majorityVote++;
 		
 		if(phtCounterT1 > PHT_CTR_MAX/2)
@@ -197,36 +247,63 @@ bool   PREDICTOR::GetPrediction(UINT64 PC){
 
 void  PREDICTOR::UpdatePredictor(UINT64 PC, OpType opType, bool resolveDir, bool predDir, UINT64 branchTarget){
 	
-  numPhtEntries    = (1 << VECTOR_LEN);
+  numPhtEntriesTaken    = (1 << VECTOR_LEN_TAKEN);
+  numPhtEntriesNotTaken    = (1 << VECTOR_LEN_NOT_TAKEN);
   numBimodalEntries = (1 << BIMODAL_LEN);
+  numHystEntries = (1 << (VECTOR_LEN - HystShft));
   
   UINT32 majorityVote = 0;
-  UINT64 f0, f1;
+  UINT64 f0T, f1T, f0NT, f1NT, v, v1, v2;
   UINT32 egskewOutcome, newPrediction, predMethod;
-	
-  UINT64 v = ((PC >> SHFT_AMOUNT) << HIST_LEN) + (ghr % (1 << HIST_LEN));
   
-  UINT64 v1 = v % numPhtEntries;
-  UINT64 v2 = (v >> VECTOR_LEN) % (numPhtEntries);
+  
+	//Bimodal index
   UINT32 bimodal_index = (PC >> SHFT_AMOUNT) % numBimodalEntries;
-  
-  
-	f0 = H (v1, VECTOR_LEN) ^ H_inversed (v2, VECTOR_LEN) ^ v2;
-	f1 = H_inversed (v1, VECTOR_LEN) ^ H (v2, VECTOR_LEN) ^ v1;
-  
- 
-  UINT32 phtCounterT1 = (phtTaken[f0] << 1) + HYST[f0];
-  UINT32 phtCounterNT1 = (phtNotTaken[f0] << 1) + HYST[f0];
-  UINT32 phtCounterT2= (phtTaken[f1] << 1) + HYST[f1];
-  UINT32 phtCounterNT2 = (phtNotTaken[f1] << 1) + HYST[f1];
   UINT32 bimodalCounter = bimodal[bimodal_index];
+	
+	//Index PHT1 TAKEN
+  v = ((PC >> SHFT_AMOUNT) << HL_TAKEN_1) + (ghr % ((UINT64)1 << HL_TAKEN_1));
+  v1 = v % numPhtEntriesTaken;
+  v2 = (v >> VECTOR_LEN_TAKEN) % (numPhtEntriesTaken);
+  
+	f0T = H (v1, VECTOR_LEN_TAKEN) ^ H_inversed (v2, VECTOR_LEN_TAKEN) ^ v2;
+	
+	
+	//Index PHT2 TAKEN
+  v = ((PC >> SHFT_AMOUNT) << HL_TAKEN_2) + (ghr % ((UINT64)1 << HL_TAKEN_2));
+  v1 = v % numPhtEntriesTaken;
+  v2 = (v >> VECTOR_LEN_TAKEN) % (numPhtEntriesTaken);
+  
+	f1T = H_inversed (v1, VECTOR_LEN_TAKEN) ^ H (v2, VECTOR_LEN_TAKEN) ^ v1;
+	
+		UINT32 phtCounterT1 = (phtTaken[f0T] << 1) + HYSTTaken[f0T >> (VECTOR_LEN_TAKEN - VECTOR_LEN + HystShft)];
+		UINT32 phtCounterT2 = (phtTaken[f1T] << 1) + HYSTTaken[f1T >> (VECTOR_LEN_TAKEN - VECTOR_LEN + HystShft)];
+	
+	
+	//Index PHT1 NOT TAKEN
+  v = ((PC >> SHFT_AMOUNT) << HL_NOTTAKEN_1) + (ghr % ((UINT64)1 << HL_NOTTAKEN_1));
+  v1 = v % numPhtEntriesNotTaken;
+  v2 = (v >> VECTOR_LEN_NOT_TAKEN) % (numPhtEntriesNotTaken);
+  
+	f0NT = H (v1, VECTOR_LEN_NOT_TAKEN) ^ H_inversed (v2, VECTOR_LEN_NOT_TAKEN) ^ v2;
+	
+	
+	//Index PHT2 NOT TAKEN
+  v = ((PC >> SHFT_AMOUNT) << HL_NOTTAKEN_2) + (ghr % ((UINT64)1 << HL_NOTTAKEN_2));
+  v1 = v % numPhtEntriesNotTaken;
+  v2 = (v >> VECTOR_LEN_NOT_TAKEN) % (numPhtEntriesNotTaken);
+  
+	f1NT = H_inversed (v1, VECTOR_LEN_NOT_TAKEN) ^ H (v2, VECTOR_LEN_NOT_TAKEN) ^ v1;
+ 
+		UINT32 phtCounterNT1 = (phtNotTaken[f0NT] << 1) + HYSTNotTaken[f0NT >> (VECTOR_LEN_NOT_TAKEN - VECTOR_LEN + HystShft)];
+		UINT32 phtCounterNT2 = (phtNotTaken[f1NT] << 1) + HYSTNotTaken[f1NT >> (VECTOR_LEN_NOT_TAKEN - VECTOR_LEN + HystShft)];
   
   
-	if(bimodalCounter == PHT_CTR_MAX  ||  bimodalCounter == 0){
+	if((bimodalCounter & 1) == 1){
 		
 		predMethod = 1;
 		
-		if(bimodalCounter > PHT_CTR_MAX/2){
+		if(bimodalCounter >> 1){
 		
 			majorityVote++;
 			
@@ -269,7 +346,7 @@ void  PREDICTOR::UpdatePredictor(UINT64 PC, OpType opType, bool resolveDir, bool
 		
 		predMethod = 0;
 			
-		if(bimodalCounter > PHT_CTR_MAX/2)
+		if(bimodalCounter >> 1)
 			majorityVote++;
 		
 		if(phtCounterT1 > PHT_CTR_MAX/2)
@@ -295,139 +372,129 @@ void  PREDICTOR::UpdatePredictor(UINT64 PC, OpType opType, bool resolveDir, bool
 
 	}
   
-/*//My stats
-NumBranches++;
+//My stats
+  NumBranches++;
 
-if(resolveDir != predDir){NumMispred++;}
+  if(resolveDir != predDir){NumMispred++;};
 
-if(		((phtCounterT1 > PHT_CTR_MAX/2) != resolveDir)	&&	((phtCounterT1 > PHT_CTR_MAX/2) == predDir)   &&   (metaCounter > PHT_CTR_MAX/2)  &&  ((bimodalCounter >> 1) == 1))
-	phtTakenakenRelativeMispred++;
+  if((bimodalCounter >> 1) != resolveDir){
+	bimodalMispred++;
+  }
+	
+if(predMethod == 1){
+	
+	MajorityVote3Used++;
+	
+	if(predDir != resolveDir){
+		MajorityVote3Mispred++;
+	}
+	
+	if((bimodalCounter >> 1) == 1){
+		
+		TakenPhtUsed++;
+		
+		if(predDir != resolveDir){
+			TakenPhtMispred++;
+		
+		if((phtCounterT1 >> 1) != resolveDir){
+			phtT1mispred++;
+		}
+		if((phtCounterT2 >> 1)!= resolveDir){
+			phtT2mispred++;
+		}
+		}
+	
+	}
+	else{
+		
+		NotTakenPhtUsed++;
+		
+		if(predDir != resolveDir){
+			NotTakenPhtMispred++;
+		
+		if((phtCounterNT1 >> 1) != resolveDir){
+			phtNT1mispred++;
+		}
+		if((phtCounterNT2 >> 1) != resolveDir){
+			phtNT2mispred++;
+		}
+		}
+		
+	}
+}
+else{
+	
+	MajorityVote5Used++;
+	
+	if(predDir != resolveDir){
+		MajorityVote5Mispred++;
 
-if(		((phtCounterT1 > PHT_CTR_MAX/2) != resolveDir)	&&	((phtCounterT1 > PHT_CTR_MAX/2) == predDir)   &&   (metaCounter > PHT_CTR_MAX/2)  &&  ((bimodalCounter >> 1) == 0))
-	pht1NotTakenRelativeMispred++;
-
-if(		((phtCounterNT2 > PHT_CTR_MAX/2) != resolveDir)	&&	((phtCounterNT2 > PHT_CTR_MAX/2) == predDir)		&&	(metaCounter > PHT_CTR_MAX/2)  &&  ((bimodalCounter >> 1) == 1))
-	phtTakenakenRelativeMispred++;
-
-if(		((phtCounterNT2 > PHT_CTR_MAX/2) != resolveDir)	&&	((phtCounterNT2 > PHT_CTR_MAX/2) == predDir)		&&	(metaCounter > PHT_CTR_MAX/2)  &&  ((bimodalCounter >> 1) == 0))
-	pht2NotTakenRelativeMispred++;
-
-if(		((bimodalCounter > PHT_CTR_MAX/2) != resolveDir)	&&	((bimodalCounter > PHT_CTR_MAX/2) == predDir)		&&	(metaCounter > PHT_CTR_MAX/2))
-	bimodalEgskewRelativeMispred++;
-
-if(		((bimodalCounter > PHT_CTR_MAX/2) != resolveDir)	&&	(metaCounter < PHT_CTR_MAX/2))
-	bimodalRelativeMispred++;
-
-if(  ((phtCounterT1 > PHT_CTR_MAX/2) == predDir)  &&  (metaCounter > PHT_CTR_MAX/2)  &&  ((bimodalCounter >> 1) == 1))
-	NumphtTaken++;
-
-if(  ((phtCounterNT1 > PHT_CTR_MAX/2) == predDir)  &&  (metaCounter > PHT_CTR_MAX/2)  &&  ((bimodalCounter >> 1) == 0))
-	NumphtNotTaken++;
-
-if(  ((phtCounterT2 > PHT_CTR_MAX/2) == predDir)  &&  (metaCounter > PHT_CTR_MAX/2)  &&  ((bimodalCounter >> 1) == 1))
-	NumphtTaken++;
-
-if(  ((phtCounterNT2 > PHT_CTR_MAX/2) == predDir)  &&  (metaCounter > PHT_CTR_MAX/2)  &&  ((bimodalCounter >> 1) == 0))
-	NumphtNotTaken++;
-
-if(((bimodalCounter > PHT_CTR_MAX/2) == predDir) && (metaCounter > PHT_CTR_MAX/2))
-	Numbimodal++;
+	if((phtCounterT1 >> 1) != resolveDir){
+		phtT1mispred++;
+	}
+	if((phtCounterT2 >> 1) != resolveDir){
+		phtT2mispred++;
+	}
+	if((phtCounterNT1 >> 1) != resolveDir){
+		phtNT1mispred++;
+	}
+	if((phtCounterNT2 >> 1) != resolveDir){
+		phtNT2mispred++;
+	}
+	
+	}
+	
+}
 
 
-if(metaCounter < PHT_CTR_MAX/2)
-	metaChoosedBimodal++;
-
-if((metaCounter < PHT_CTR_MAX/2)	&&	((bimodalCounter > PHT_CTR_MAX/2) != resolveDir)	 &&	(egskewOutcome == resolveDir))
-	metaChoosedWrong++;
-
-if((metaCounter > PHT_CTR_MAX/2)	&&	(egskewOutcome != resolveDir) &&	((bimodalCounter > PHT_CTR_MAX/2) == resolveDir))
-	metaChoosedWrong++;
-
-if(		(((bimodalCounter > PHT_CTR_MAX/2) != resolveDir)		&&		(egskewOutcome != resolveDir))		||		(((bimodalCounter > PHT_CTR_MAX/2) == resolveDir)		&&		(egskewOutcome == resolveDir))		)
-	metaDontMatter++;
-
-*/
-
-
-//Update 
+//Update
   
 	
 	//UpdateALL:
 	if(predMethod == 1){
-	  
-	if(resolveDir == TAKEN){
+	
+		//if( ! (predDir == resolveDir && (bimodalCounter >> 1) != resolveDir))
+			bimodal[bimodal_index] = updateCounter(bimodalCounter, resolveDir, PHT_CTR_MAX);
 		
-		bimodal[bimodal_index] = SatIncrement(bimodalCounter, PHT_CTR_MAX);	
-		
-		if(bimodalCounter >> 1 == 1){
-		
-			phtCounterT1 = SatIncrement(phtCounterT1, PHT_CTR_MAX);
-			phtCounterT2 = SatIncrement(phtCounterT2, PHT_CTR_MAX);
-		}
-		else{
-			
-			phtCounterNT1 = SatIncrement(phtCounterNT1, PHT_CTR_MAX);
-			phtCounterNT2 = SatIncrement(phtCounterNT2, PHT_CTR_MAX);	
-		}
-	  
-	  	phtTaken[f0] = phtCounterT1 >> 1;
-		phtTaken[f1] = phtCounterT2 >> 1;
-		HYST[f0] = phtCounterT1 & 1;
-	    HYST[f1] = phtCounterT2 & 1;
-	  
-	}
-	else{
-		
-		bimodal[bimodal_index] = SatDecrement(bimodalCounter);
 		
 		if(bimodalCounter >> 1 == 1){
 		
-			phtCounterT1 = SatDecrement(phtCounterT1);
-			phtCounterT2 = SatDecrement(phtCounterT2);
+			phtCounterT1 = updateCounter(phtCounterT1, resolveDir, PHT_CTR_MAX);
+			phtCounterT2 = updateCounter(phtCounterT2, resolveDir, PHT_CTR_MAX);
+			
+			phtTaken[f0T] = phtCounterT1 >> 1;
+			phtTaken[f1T] = phtCounterT2 >> 1;
+			HYSTTaken[f0T >> (VECTOR_LEN_TAKEN - VECTOR_LEN + HystShft)] = phtCounterT1 & 1;
+			HYSTTaken[f1T >> (VECTOR_LEN_TAKEN - VECTOR_LEN + HystShft)] = phtCounterT2 & 1;
 		}
 		else{
 			
-			phtCounterNT1 = SatDecrement(phtCounterNT1);
-			phtCounterNT2 = SatDecrement(phtCounterNT2);
+			phtCounterNT1 = updateCounter(phtCounterNT1, resolveDir, PHT_CTR_MAX);
+			phtCounterNT2 = updateCounter(phtCounterNT2, resolveDir, PHT_CTR_MAX);
+
+			phtNotTaken[f0NT] = phtCounterNT1 >> 1;
+			phtNotTaken[f1NT] = phtCounterNT2 >> 1;
+			HYSTNotTaken[f0NT >> (VECTOR_LEN_NOT_TAKEN - VECTOR_LEN + HystShft)] = phtCounterNT1 & 1;
+			HYSTNotTaken[f1NT >> (VECTOR_LEN_NOT_TAKEN - VECTOR_LEN + HystShft)] = phtCounterNT2 & 1;			
 		}
-		
-		phtNotTaken[f0] = phtCounterNT1 >> 1;
-		phtNotTaken[f1] = phtCounterNT2 >> 1;
-		HYST[f0] = phtCounterNT1 & 1;
-		HYST[f1] = phtCounterNT2 & 1;
-		
-	  }
-	  
 	}
 	else{
 		
-		if(resolveDir == TAKEN){
-		
-			bimodal[bimodal_index] = SatIncrement(bimodalCounter, PHT_CTR_MAX);		
-			phtCounterT1 = SatIncrement(phtCounterT1, PHT_CTR_MAX);
-			phtCounterT2 = SatIncrement(phtCounterT2, PHT_CTR_MAX);	
-			phtCounterNT1 = SatIncrement(phtCounterNT1, PHT_CTR_MAX);
-			phtCounterNT2 = SatIncrement(phtCounterNT2, PHT_CTR_MAX);	
-		}
-	    else{
+			bimodal[bimodal_index] = updateCounter(bimodalCounter, resolveDir, PHT_CTR_MAX);	
+			phtCounterT1 = updateCounter(phtCounterT1, resolveDir, PHT_CTR_MAX);
+			phtCounterT2 = updateCounter(phtCounterT2, resolveDir, PHT_CTR_MAX);
+			phtCounterNT1 = updateCounter(phtCounterNT1, resolveDir, PHT_CTR_MAX);
+			phtCounterNT2 = updateCounter(phtCounterNT2, resolveDir, PHT_CTR_MAX);
 		  
 
-			bimodal[bimodal_index] = SatDecrement(bimodalCounter);
-			phtCounterT1 = SatDecrement(phtCounterT1);
-			phtCounterT2 = SatDecrement(phtCounterT2);
-			phtCounterNT1 = SatDecrement(phtCounterNT1);
-			phtCounterNT2 = SatDecrement(phtCounterNT2);
-			
-		}
-		
-	  phtTaken[f0] = phtCounterT1 >> 1;
-	  phtTaken[f1] = phtCounterT2 >> 1;
-	  phtNotTaken[f0] = phtCounterNT1 >> 1;
-	  phtNotTaken[f1] = phtCounterNT2 >> 1;
-	  HYST[f0] = phtCounterT1 & 1;
-	  HYST[f1] = phtCounterT2 & 1;
-	  HYST[f0] = phtCounterNT1 & 1;
-	  HYST[f1] = phtCounterNT2 & 1;
+	  phtTaken[f0T] = phtCounterT1 >> 1;
+	  phtTaken[f1T] = phtCounterT2 >> 1;
+	  phtNotTaken[f0NT] = phtCounterNT1 >> 1;
+	  phtNotTaken[f1NT] = phtCounterNT2 >> 1;
+	  HYSTTaken[f0T >> (VECTOR_LEN_TAKEN - VECTOR_LEN + HystShft)] = phtCounterT1 & 1;
+	  HYSTTaken[f1T >> (VECTOR_LEN_TAKEN - VECTOR_LEN + HystShft)] = phtCounterT2 & 1;
+	  HYSTNotTaken[f0NT >> (VECTOR_LEN_NOT_TAKEN - VECTOR_LEN + HystShft)] = phtCounterNT1 & 1;
+	  HYSTNotTaken[f1NT >> (VECTOR_LEN_NOT_TAKEN - VECTOR_LEN + HystShft)] = phtCounterNT2 & 1;
 		
 	}
 	
@@ -447,8 +514,8 @@ void    PREDICTOR::TrackOtherInst(UINT64 PC, OpType opType, bool branchDir, UINT
   return;
 
 }
-void PrintStat(){}
-/*void PrintStat(){
+//void PrintStat(){}
+void PrintStat(){
 	
 	
 //Absolute mispred = actual mispred of a bank, purely theoretical
@@ -458,38 +525,30 @@ printf("\n");
 printf("\nPredictor_accurancy:%9.5f %%",  100 - (100.0*(double)(NumMispred)/NumBranches));
 printf("\n");
 
-printf("\nMETA");
-printf("\nMeta choosed bimodal:%9.5f %%",  (100.0*(double)(metaChoosedBimodal)/NumBranches));
-printf("\nMeta choosed egskew:%9.5f %%",  100 - (100.0*(double)(metaChoosedBimodal)/NumBranches));
-printf("\nMeta choosed right:%9.5f %%",  100 - (100.0*(double)(metaChoosedWrong)/NumBranches) - (100.0*(double)(metaDontMatter)/NumBranches));
-printf("\nMeta choosed wrong:%9.5f %%",  (100.0*(double)(metaChoosedWrong)/NumBranches));
-printf("\nMeta doesnt matter:%9.5f %%",  (100.0*(double)(metaDontMatter)/NumBranches));
-printf("\nTaken PHTs used:%9.5f %%",  (100.0*(double)(NumphtTaken + NumphtTaken)/NumBranches));
-printf("\nNot Taken PHTs used:%9.5f %%",  (100.0*(double)(NumphtNotTaken + NumphtNotTaken)/NumBranches));
+printf("\nMode");
+printf("\n5 Component majorityVote was used %9.5f%%",  (100.0*(double)(MajorityVote5Used)/NumBranches));
+printf("\n5 Component majorityVote accurancy %9.5f%%",  (100 - 100.0*(double)(MajorityVote5Mispred)/MajorityVote5Used));
+printf("\n3 Component majorityVote was used %9.5f%%",  (100.0*(double)(MajorityVote3Used)/NumBranches));
+printf("\n3 Component majorityVote accurancy %9.5f%%",  (100 - 100.0*(double)(MajorityVote3Mispred)/MajorityVote3Used));
+printf("\n");
+printf("\nTaken PHT was used %9.5f%%",  (100.0*(double)(TakenPhtUsed)/NumBranches));
+printf("\nNot Taken PHT was used %9.5f%%",  (100.0*(double)(NotTakenPhtUsed)/NumBranches));
+printf("\nTaken PHT accurancy %9.5f%%",  (100 - 100.0*(double)(TakenPhtMispred)/TakenPhtUsed));
+printf("\nNot Taken PHT accurancy %9.5f%%",  (100 - 100.0*(double)(NotTakenPhtMispred)/NotTakenPhtUsed));
 printf("\n");
 
+printf("\nBimodal accurancy %9.5f%%", 100 - 100.0*(double)(bimodalMispred)/NumBranches);
 
-printf("\npht1_relative_mispred:%9.5f %%",   100.0*(double)( (phtTakenakenRelativeMispred + pht1NotTakenRelativeMispred) / (NumphtTaken + NumphtNotTaken) ) );
-printf("\npht1_how often used:%9.5f %%",   100.0*(double)(NumphtTaken + NumphtNotTaken)/NumBranches);
-printf("\npht1 Taken misprediction:%9.5f %%",   100.0*(double) ( phtTakenakenRelativeMispred / NumphtTaken ) );
-printf("\npht1 Not Taken misprediction:%9.5f %%",   100.0*(double) ( pht1NotTakenRelativeMispred / NumphtNotTaken ) );
-printf("\n");
-
-printf("\npht2_relative_mispred:%9.5f %%", 100.0*(double) ( (phtTakenakenRelativeMispred + pht2NotTakenRelativeMispred)/(NumphtTaken + NumphtNotTaken) ) );
-printf("\npht2_how often used:%9.5f %%", 100.0*(double)(NumphtTaken + NumphtNotTaken)/NumBranches);
-printf("\npht2 Taken misprediction:%9.5f %%",   100.0*(double) ( phtTakenakenRelativeMispred / NumphtTaken ) );
-printf("\npht2 Not Taken misprediction:%9.5f %%",   100.0*(double) ( pht2NotTakenRelativeMispred / NumphtNotTaken ) );
+printf("\nPercentage of mispredictions caused by Taken PHT 1 %9.5f%%",   (100 - 100.0*(double)(phtT1mispred)/(NumMispred)));
+printf("\nPercentage of mispredictions caused by Taken PHT 2 %9.5f%%",   (100 - 100.0*(double)(phtT2mispred)/(NumMispred)));
+printf("\nPercentage of mispredictions caused by Not Taken PHT 1 %9.5f%%",   (100 - 100.0*(double)(phtNT1mispred)/(NumMispred)));
+printf("\nPercentage of mispredictions caused by Not Taken PHT 2 %9.5f%%",   (100 - 100.0*(double)(phtNT2mispred)/(NumMispred)));
+printf("\nAccurancy %9.5f%%",   100.0*(double)(bimodalMispred)/(NumBranches));
 printf("\n");
 
-printf("\nbimodal_relative_mispred in egskew:%9.5f %%", 100.0*(double)(bimodalEgskewRelativeMispred)/Numbimodal);
-printf("\nbimodal_how often used in egskew:%9.5f %%", 100.0*(double)(Numbimodal)/NumBranches);
-printf("\n");
-printf("\nbimodal_relative_mispred in BIM:%9.5f %%", 100.0*(double)(bimodalRelativeMispred)/metaChoosedBimodal);
-printf("\nMeta choosed bimodal:%9.5f %%",  (100.0*(double)(metaChoosedBimodal)/NumBranches));
-printf("\n");
 
 	return;
-}*/
+}
 
 /***********************************************************/
 #endif
