@@ -43,7 +43,7 @@ class PREDICTOR{
   UINT64  ghr = 0;           // global history register
   UINT32 static const numPhtEntries = 1 << (LOGPRED - 1);
   UINT32 static const numBimMetaEntries = 1 << (LOGPRED - 2);
-  UINT32 static const numHystEntries = 1 << (LOGPRED - 2);
+  UINT32 static const numHystEntries = 1 << (LOGPRED - 3);
 
   UINT32 pht[numPhtEntries];
   /* GOG1: shared prediction tables for G0 and G1*/
@@ -182,8 +182,8 @@ void  PREDICTOR::UpdatePredictor(UINT64 PC, OpType opType, bool resolveDir, bool
 	indexbim = (INDEX (Add, GHIST, L_BIM, 3) << 2) + (NUMHYST ^ 2);
 
 
-	pbim = BIMMETA[indexbim];
-	pmeta = BIMMETA[indexmeta];
+	pbim = BIMMETA[indexbim % (1 << (LOGPRED - 3))];
+	pmeta = BIMMETA[indexmeta % (1 << (LOGPRED - 3))];
 	
 	//if(pbim == 1){
 		pg0 = pht[indexg0];
@@ -205,15 +205,15 @@ void  PREDICTOR::UpdatePredictor(UINT64 PC, OpType opType, bool resolveDir, bool
 /*recompute the complete counter values*/
 
 	//if(pbim == 1){
-		pg0 = (pg0 << 1) + HYST[indexg0 & ((1 << (LOGPRED - 3)) - 1)];
-		pg1 = (pg1 << 1) + HYST[indexg1 & ((1 << (LOGPRED - 3)) - 1)];
+		pg0 = (pg0 << 1) + HYST[indexg0 & ((1 << (LOGPRED - 2)) - 1)];
+		pg1 = (pg1 << 1) + HYST[indexg1 & ((1 << (LOGPRED - 2)) - 1)];
 	/*}
 	else{
 		pg0 = (pg0 << 1) + HYST[indexg2 & ((1 << (LOGPRED - 2)) - 1)];
 		pg1 = (pg1 << 1) + HYST[indexg3 & ((1 << (LOGPRED - 2)) - 1)];
 	}*/
-	pbim = (pbim << 1) + HYST[indexbim % (1 << (LOGPRED - 3))];
-	pmeta = (pmeta << 1) + HYST[indexmeta % (1 << (LOGPRED - 3))];
+	pbim = (pbim << 1) + HYST[indexbim];
+	pmeta = (pmeta << 1) + HYST[indexmeta];
 /*      pg0 ^= 1;
         pg1 ^= 1;
         pbim ^= 1;
@@ -310,15 +310,15 @@ void  PREDICTOR::UpdatePredictor(UINT64 PC, OpType opType, bool resolveDir, bool
         pbim ^= 1;
         pmeta ^=1;*/
 		
-	HYST[indexbim % (1 << (LOGPRED - 3))] = (pbim & 1);
-	HYST[indexmeta % (1 << (LOGPRED - 3))] = (pmeta & 1);
+	HYST[indexbim] = (pbim & 1);
+	HYST[indexmeta] = (pmeta & 1);
 	
 	//if(pbim >> 1){
 		pht[indexg0] = (pg0 >> 1) & 1;
 		pht[indexg1] = (pg1 >> 1) & 1;
 		
-		HYST[indexg0 & ((1 << (LOGPRED - 3)) - 1)] = (pg0 & 1);
-		HYST[indexg1 & ((1 << (LOGPRED - 3)) - 1)] = (pg1 & 1);
+		HYST[indexg0 & ((1 << (LOGPRED - 2)) - 1)] = (pg0 & 1);
+		HYST[indexg1 & ((1 << (LOGPRED - 2)) - 1)] = (pg1 & 1);
 		
 
 	/*}
@@ -330,8 +330,8 @@ void  PREDICTOR::UpdatePredictor(UINT64 PC, OpType opType, bool resolveDir, bool
 		HYST[indexg3 & ((1 << (LOGPRED - 2)) - 1)] = (pg1 & 1);
 	}*/
 	
-	BIMMETA[indexbim] = (pbim >> 1) & 1;
-	BIMMETA[indexmeta] = (pmeta >> 1) & 1;
+	BIMMETA[indexbim % (1 << (LOGPRED - 3))] = (pbim >> 1) & 1;
+	BIMMETA[indexmeta % (1 << (LOGPRED - 3))] = (pmeta >> 1) & 1;
 	
 	
 
