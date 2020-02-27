@@ -42,8 +42,9 @@ class PREDICTOR{
  private:
   UINT64  ghr = 0;           // global history register
   UINT32 static const numPhtEntries = 1 << (LOGPRED - 1);
-  UINT32 static const numBimMetaEntries = 1 << (LOGPRED - 2);
-  UINT32 static const numHystEntries = 1 << (LOGPRED - 3);
+  UINT32 static const numBimMetaEntries = 1 << (LOGPRED - 3);
+  UINT32 static const numHystEntries = 1 << (LOGPRED - 2);
+  UINT32 static const numFilterEntries = 1 << (LOGPRED - 3);
 
   UINT32 pht[numPhtEntries];
   /* GOG1: shared prediction tables for G0 and G1*/
@@ -53,6 +54,8 @@ class PREDICTOR{
   /*BIMMETA: shared prediction tables for  BIM and META*/
   UINT32 HYST[numHystEntries];
   /* HYST: shared hysteresis tables */
+  UINT32 FilterCnt[numFilterEntries];
+  UINT32 FilterDir[numFilterEntries];
 
 
  public:
@@ -97,7 +100,14 @@ PREDICTOR::PREDICTOR(void){
     HYST[ii]=0;
   }
   
-  
+  for(UINT32 ii=0; ii< numFilterEntries; ii++){
+    FilterCnt[ii]=0;
+  }
+    
+  for(UINT32 ii=0; ii< numFilterEntries; ii++){
+    FilterDir[ii]=0;
+  }
+	
 }
 
 
